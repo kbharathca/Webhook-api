@@ -1,0 +1,5 @@
+{
+  "name": "HookMaster AI",
+  "description": "A next-gen webhook inspector and debugger. Create endpoints, simulate incoming traffic, and analyze payloads with Google Gemini AI. Features a high-performance UI with real-time updates.",
+  "requestFramePermissions": []
+}
