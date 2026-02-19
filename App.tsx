@@ -9,7 +9,13 @@ import { WebhookEndpoint, WebhookRequest, AuthState } from './types';
 import { generateId } from './utils/helpers';
 
 const App = () => {
-  const [auth, setAuth] = useState<AuthState>({ isAuthenticated: false, username: null });
+  const [auth, setAuth] = useState<AuthState>(() => {
+    const saved = sessionStorage.getItem('hookmaster_session');
+    return saved === 'active' 
+      ? { isAuthenticated: true, username: 'kbharathca' }
+      : { isAuthenticated: false, username: null };
+  });
+
   const [endpoints, setEndpoints] = useState<WebhookEndpoint[]>([]);
   const [requests, setRequests] = useState<WebhookRequest[]>([]);
   const [activeEndpointId, setActiveEndpointId] = useState<string | null>(null);
@@ -17,15 +23,7 @@ const App = () => {
   const [isTestConsoleOpen, setIsTestConsoleOpen] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
-  // Auth Initialization
-  useEffect(() => {
-    const savedSession = sessionStorage.getItem('hookmaster_session');
-    if (savedSession === 'active') {
-      setAuth({ isAuthenticated: true, username: 'kbharathca' });
-    }
-  }, []);
-
-  // Data Initialization
+  // Load data from "Server" (LocalStorage)
   useEffect(() => {
     if (!auth.isAuthenticated) return;
 
@@ -33,9 +31,7 @@ const App = () => {
     if (savedEndpoints) {
       const parsed = JSON.parse(savedEndpoints);
       setEndpoints(parsed);
-      if (parsed.length > 0) {
-        setActiveEndpointId(parsed[0].id);
-      }
+      if (parsed.length > 0) setActiveEndpointId(parsed[0].id);
     } else {
       const defaultEndpoint = {
         id: generateId(),
@@ -45,7 +41,6 @@ const App = () => {
       };
       setEndpoints([defaultEndpoint]);
       setActiveEndpointId(defaultEndpoint.id);
-      localStorage.setItem('hookmaster_endpoints', JSON.stringify([defaultEndpoint]));
     }
 
     const savedRequests = localStorage.getItem('hookmaster_requests');
@@ -58,7 +53,7 @@ const App = () => {
     }
   }, [auth.isAuthenticated]);
 
-  // Sync to Storage
+  // Sync back to "Server" (LocalStorage)
   useEffect(() => {
     if (auth.isAuthenticated && endpoints.length > 0) {
       localStorage.setItem('hookmaster_endpoints', JSON.stringify(endpoints));
@@ -108,7 +103,7 @@ const App = () => {
 
   const handleCopyUrl = () => {
     if (!activeEndpointId) return;
-    const url = `https://hookmaster.app/hooks/${activeEndpointId}`;
+    const url = `${window.location.origin}/hooks/${activeEndpointId}`;
     navigator.clipboard.writeText(url);
     setCopyFeedback(true);
     setTimeout(() => setCopyFeedback(false), 2000);
@@ -147,7 +142,6 @@ const App = () => {
 
   return (
     <div className="flex h-screen bg-black text-gray-100 overflow-hidden font-sans selection:bg-red-500/30 selection:text-red-200">
-      
       <Sidebar 
         endpoints={endpoints}
         activeEndpointId={activeEndpointId}
@@ -180,7 +174,7 @@ const App = () => {
                       </div>
                       <div className={`bg-black/40 px-3 py-1.5 rounded border ${copyFeedback ? 'border-green-500/50' : 'border-white/10'} text-gray-300 font-mono text-xs truncate flex items-center group cursor-pointer hover:border-red-500/50 transition-all duration-300`}
                            onClick={handleCopyUrl}>
-                          <span className="text-gray-500 mr-1">https://hookmaster.app/hooks/</span>
+                          <span className="text-gray-500 mr-1">/hooks/</span>
                           <span className="text-white">{activeEndpointId}</span>
                           <div className="ml-2 flex items-center">
                             {copyFeedback ? (
@@ -204,7 +198,7 @@ const App = () => {
                       >
                          {isTestConsoleOpen ? 'Close Simulator' : 'Simulate Request'}
                       </Button>
-                      <button onClick={handleLogout} className="text-gray-500 hover:text-white transition-colors" title="Logout">
+                      <button onClick={handleLogout} className="text-gray-500 hover:text-white transition-colors p-2" title="Logout">
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                         </svg>
