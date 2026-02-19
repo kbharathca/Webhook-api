@@ -23,49 +23,45 @@ const App = () => {
   const [isTestConsoleOpen, setIsTestConsoleOpen] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
-  // Load data from "Server" (LocalStorage)
-  useEffect(() => {
-    if (!auth.isAuthenticated) return;
-
-    const savedEndpoints = localStorage.getItem('hookmaster_endpoints');
-    if (savedEndpoints) {
-      const parsed = JSON.parse(savedEndpoints);
-      setEndpoints(parsed);
-      if (parsed.length > 0) setActiveEndpointId(parsed[0].id);
-    } else {
-      const defaultEndpoint = {
-        id: generateId(),
-        name: 'Main Server Hook',
-        createdAt: Date.now(),
-        color: 'red'
-      };
-      setEndpoints([defaultEndpoint]);
-      setActiveEndpointId(defaultEndpoint.id);
-    }
-
-    const savedRequests = localStorage.getItem('hookmaster_requests');
-    if (savedRequests) {
-      try {
-        setRequests(JSON.parse(savedRequests));
-      } catch (e) {
-        console.error("Failed to parse saved requests", e);
+  // Fetch Endpoints from Server
+  const fetchEndpoints = async () => {
+    try {
+      const res = await fetch('/api/endpoints');
+      const data = await res.json();
+      setEndpoints(data);
+      if (data.length > 0 && !activeEndpointId) {
+        setActiveEndpointId(data[0].id);
       }
+    } catch (err) {
+      console.error("Failed to fetch endpoints", err);
     }
-  }, [auth.isAuthenticated]);
+  };
 
-  // Sync back to "Server" (LocalStorage)
-  useEffect(() => {
-    if (auth.isAuthenticated && endpoints.length > 0) {
-      localStorage.setItem('hookmaster_endpoints', JSON.stringify(endpoints));
+  // Fetch Requests for Active Endpoint
+  const fetchRequests = async (id: string) => {
+    try {
+      const res = await fetch(`/api/requests/${id}`);
+      const data = await res.json();
+      setRequests(data);
+    } catch (err) {
+      console.error("Failed to fetch requests", err);
     }
-  }, [endpoints, auth.isAuthenticated]);
+  };
 
   useEffect(() => {
     if (auth.isAuthenticated) {
-      const prunedRequests = requests.slice(0, 100);
-      localStorage.setItem('hookmaster_requests', JSON.stringify(prunedRequests));
+      fetchEndpoints();
     }
-  }, [requests, auth.isAuthenticated]);
+  }, [auth.isAuthenticated]);
+
+  useEffect(() => {
+    if (activeEndpointId) {
+      fetchRequests(activeEndpointId);
+      // Poll for new requests every 3 seconds
+      const interval = setInterval(() => fetchRequests(activeEndpointId), 3000);
+      return () => clearInterval(interval);
+    }
+  }, [activeEndpointId]);
 
   const handleLogin = (user: string, pass: string) => {
     if (user === 'kbharathca' && pass === 'narendrak95') {
@@ -81,24 +77,34 @@ const App = () => {
     sessionStorage.removeItem('hookmaster_session');
   };
 
-  const handleCreateEndpoint = () => {
+  const handleCreateEndpoint = async () => {
     const newEndpoint: WebhookEndpoint = {
       id: generateId(),
       name: `Endpoint ${endpoints.length + 1}`,
       createdAt: Date.now(),
       color: 'blue'
     };
-    setEndpoints([...endpoints, newEndpoint]);
+    
+    await fetch('/api/endpoints', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newEndpoint)
+    });
+    
+    fetchEndpoints();
     setActiveEndpointId(newEndpoint.id);
   };
 
-  const handleDeleteEndpoint = (id: string) => {
-    const newEndpoints = endpoints.filter(e => e.id !== id);
-    setEndpoints(newEndpoints);
-    setRequests(requests.filter(r => r.endpointId !== id));
-    if (activeEndpointId === id) {
-      setActiveEndpointId(newEndpoints[0]?.id || null);
-    }
+  const handleDeleteEndpoint = async (id: string) => {
+    await fetch(`/api/endpoints/${id}`, { method: 'DELETE' });
+    fetchEndpoints();
+    if (activeEndpointId === id) setActiveEndpointId(null);
+  };
+
+  const handleClearRequests = async () => {
+    if (!activeEndpointId) return;
+    await fetch(`/api/requests/${activeEndpointId}`, { method: 'DELETE' });
+    setRequests([]);
   };
 
   const handleCopyUrl = () => {
@@ -109,35 +115,26 @@ const App = () => {
     setTimeout(() => setCopyFeedback(false), 2000);
   };
 
-  const handleSimulateReceive = (payload: any, typeName: string) => {
+  const handleSimulateReceive = async (payload: any, typeName: string) => {
     if (!activeEndpointId) return;
-
-    const newRequest: WebhookRequest = {
-      id: generateId(),
-      endpointId: activeEndpointId,
+    
+    // Send to the real webhook endpoint on our server
+    await fetch(`/hooks/${activeEndpointId}`, {
       method: 'POST',
-      timestamp: Date.now(),
-      headers: [
-        { key: 'Content-Type', value: 'application/json' },
-        { key: 'User-Agent', value: 'HookMaster-Simulator/1.0' },
-        { key: 'X-Webhook-Event', value: typeName },
-        { key: 'X-Request-ID', value: `req_${Math.random().toString(36).substr(2, 9)}` }
-      ],
-      query: {},
-      body: payload,
-      size: JSON.stringify(payload).length,
-      contentType: 'application/json'
-    };
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Webhook-Event': typeName
+      },
+      body: JSON.stringify(payload)
+    });
 
-    setRequests(prev => [newRequest, ...prev]);
-    setActiveRequestId(newRequest.id);
+    fetchRequests(activeEndpointId);
   };
 
   if (!auth.isAuthenticated) {
     return <Login onLogin={handleLogin} />;
   }
 
-  const filteredRequests = requests.filter(r => r.endpointId === activeEndpointId);
   const activeRequest = requests.find(r => r.id === activeRequestId) || null;
 
   return (
@@ -153,14 +150,20 @@ const App = () => {
       <div className="flex-1 flex relative">
         {activeEndpointId ? (
           <RequestList 
-            requests={filteredRequests}
+            requests={requests}
             activeRequestId={activeRequestId}
             onSelectRequest={setActiveRequestId}
-            onClearRequests={() => setRequests(prev => prev.filter(r => r.endpointId !== activeEndpointId))}
+            onClearRequests={handleClearRequests}
           />
         ) : (
-          <div className="w-80 bg-surface border-r border-border flex items-center justify-center text-gray-500">
-              Select an endpoint
+          <div className="w-80 bg-surface border-r border-border flex flex-col items-center justify-center text-gray-500 p-8 text-center">
+              <div className="mb-4 text-gray-700">
+                <svg className="w-16 h-16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+              </div>
+              <h3 className="text-white font-medium mb-1">No Endpoint Selected</h3>
+              <p className="text-xs">Create or select an endpoint from the sidebar to begin inspecting traffic.</p>
           </div>
         )}
 
@@ -170,10 +173,11 @@ const App = () => {
                   <div className="flex items-center space-x-2 overflow-hidden">
                       <div className="flex items-center mr-4">
                         <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse mr-2 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
-                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Server Sync Active</span>
+                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Real-time Connection Active</span>
                       </div>
                       <div className={`bg-black/40 px-3 py-1.5 rounded border ${copyFeedback ? 'border-green-500/50' : 'border-white/10'} text-gray-300 font-mono text-xs truncate flex items-center group cursor-pointer hover:border-red-500/50 transition-all duration-300`}
-                           onClick={handleCopyUrl}>
+                           onClick={handleCopyUrl}
+                           title="Click to copy Webhook URL">
                           <span className="text-gray-500 mr-1">/hooks/</span>
                           <span className="text-white">{activeEndpointId}</span>
                           <div className="ml-2 flex items-center">
